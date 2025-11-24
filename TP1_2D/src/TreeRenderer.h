@@ -14,7 +14,7 @@ public:
     void render(const std::vector<Segment>& segments);
     void setColor(float r, float g, float b) { color[0] = r; color[1] = g; color[2] = b; }
     void setLineWidth(float width) { lineWidth = width; }
-    void applyTransform(const float* transformMatrix); // NOVO MÉTODO
+    void applyTransform(const float* transformMatrix);
     
 private:
     unsigned int shaderProgram;

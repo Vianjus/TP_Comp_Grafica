@@ -21,7 +21,7 @@ float translation[2] = {0.0f, 0.0f};
 float scale = 1.0f;
 float rotation = 0.0f;
 bool showWireframe = false;
-bool thickLines = false; // NOVO: modo linhas grossas
+bool thickLines = false;
 
 // Matriz de transformação
 float transformMatrix[16] = {
@@ -34,6 +34,7 @@ float transformMatrix[16] = {
 void loadTreeFiles() {
     treeFiles = {
         "data/Nterm_064/tree2D_Nterm0064_step0064.vtk",
+        "data/Nterm_064/tree2D_Nterm0064_step0008.vtk",
         "data/Nterm_128/tree2D_Nterm0128_step0128.vtk",
         "data/Nterm_256/tree2D_Nterm0256_step0256.vtk"
     };
@@ -87,13 +88,13 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
                 updateTransformMatrix();
                 cout << "Transformacoes resetadas" << endl;
                 break;
-            case GLFW_KEY_T: // MUDEI: T para Wireframe (em vez de W)
+            case GLFW_KEY_T:
                 // Alternar wireframe
                 showWireframe = !showWireframe;
                 glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
                 cout << "Wireframe: " << (showWireframe ? "ON" : "OFF") << endl;
                 break;
-            case GLFW_KEY_L: // NOVO: L para Linhas Grossas
+            case GLFW_KEY_L:
                 thickLines = !thickLines;
                 treeRenderer.setLineWidth(thickLines ? 5.0f : 2.0f);
                 cout << "Linhas grossas: " << (thickLines ? "ON" : "OFF") << endl;
@@ -128,7 +129,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
                 treeRenderer.setColor(0.0f, 0.0f, 1.0f);
                 cout << "Cor: Azul" << endl;
                 break;
-            case GLFW_KEY_4: // NOVO: Cor original
+            case GLFW_KEY_4: //Cor original
                 treeRenderer.setColor(0.2f, 0.8f, 0.3f);
                 cout << "Cor: Original (Verde)" << endl;
                 break;
@@ -139,7 +140,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 void processInput(GLFWwindow* window) {
     bool transformed = false;
     
-    // Movimento com WASD (agora W está livre para movimento)
+    // Movimento com WASD
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { 
         translation[0] -= 0.01f; 
         transformed = true;
@@ -148,7 +149,7 @@ void processInput(GLFWwindow* window) {
         translation[0] += 0.01f; 
         transformed = true;
     }
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { // W agora é só movimento
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { 
         translation[1] += 0.01f; 
         transformed = true;
     }
@@ -157,7 +158,7 @@ void processInput(GLFWwindow* window) {
         transformed = true;
     }
     
-    // Rotação com Q/E (mais intuitivo)
+    // Rotação com Q/E
     if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) { 
         rotation += 0.02f; 
         transformed = true;
@@ -173,9 +174,10 @@ void processInput(GLFWwindow* window) {
 }
 
 int main() {
+
     // Inicializa GLFW
     if (!glfwInit()) {
-        cout << "Failed to initialize GLFW\n";
+        cout << "Falha ao inicializar GLFW" << endl;;
         return -1;
     }
 
@@ -183,9 +185,9 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(1200, 800, "TP1 - Visualizacao de Arvores Arteriais 2D", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(1200, 800, "TP1 - Visualizaçâo de Árvores Arteriais 2D", NULL, NULL);
     if (!window) {
-        cout << "Failed to create GLFW window\n";
+        cout << "Falha ao criar janela GLFW" << endl;
         glfwTerminate();
         return -1;
     }
@@ -197,13 +199,13 @@ int main() {
 
     // Inicializa GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        cout << "Failed to initialize GLAD\n";
+        cout << "Falha ao iniciar GLAD\n";
         return -1;
     }
 
     // Inicializa renderizador
     if (!treeRenderer.initialize()) {
-        cout << "Failed to initialize tree renderer\n";
+        cout << "Falha ao iniciar renderizacao da arvore\n";
         return -1;
     }
 
@@ -225,7 +227,7 @@ int main() {
     cout << "Controles:" << endl;
     cout << "ESC - Sair" << endl;
     cout << "R - Resetar visualizacao" << endl;
-    cout << "WASD - Mover (W=cima, S=baixo, A=esquerda, D=direita)" << endl;
+    cout << "WASD - Mover (W = cima, S = baixo, A = esquerda, D = direita)" << endl;
     cout << "Q/E - Rotacionar" << endl;
     cout << "Scroll Mouse - Zoom" << endl;
     cout << "T - Alternar Wireframe" << endl;
@@ -233,10 +235,6 @@ int main() {
     cout << "SETAS - Navegar entre arvores" << endl;
     cout << "1/2/3/4 - Cores (Vermelho/Verde/Azul/Original)" << endl;
     cout << endl;
-    cout << "=== Sobre Wireframe ===" << endl;
-    cout << "Wireframe mostra apenas as arestas dos objetos." << endl;
-    cout << "No modo atual (linhas), o efeito pode ser sutil." << endl;
-    cout << "Útil para ver a estrutura sem preenchimento." << endl;
 
     // Loop principal
     while (!glfwWindowShouldClose(window)) {
