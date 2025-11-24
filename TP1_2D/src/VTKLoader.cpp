@@ -4,10 +4,9 @@
 #include <iostream>
 #include <random>
 #include <cmath>
+#include <algorithm>
 
-VTKLoader::VTKLoader() {
-    // Construtor vazio
-}
+VTKLoader::VTKLoader() {}
 
 bool VTKLoader::loadFile(const std::string& filename) {
     std::cout << "Carregando: " << filename << std::endl;
@@ -15,16 +14,14 @@ bool VTKLoader::loadFile(const std::string& filename) {
     segments.clear();
     points.clear();
 
-    // Primeiro tenta carregar o arquivo real
     if (loadRealVTKFile(filename)) {
-        std::cout << "Arquivo VTK carregado com " << segments.size() << " segmentos" << std::endl;
+        std::cout << "✓ Arquivo VTK carregado: " << segments.size() << " segmentos" << std::endl;
         return true;
     }
     
-    // Se não conseguir, gera árvore procedural
-    std::cout << "Gerando árvore arterial procedural..." << std::endl;
+    std::cout << "✗ Arquivo não encontrado, gerando árvore procedural" << std::endl;
     generateProceduralTree();
-    std::cout << "Árvore procedural criada com " << segments.size() << " segmentos" << std::endl;
+    std::cout << "✓ Árvore procedural: " << segments.size() << " segmentos" << std::endl;
     
     return true;
 }
@@ -40,67 +37,73 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
     std::vector<std::pair<int, int>> connections;
     std::vector<float> radii;
 
-    bool readingPoints = false;
-    bool readingLines = false;
-    bool readingRadii = false;
-    int pointsCount = 0;
-    int linesCount = 0;
+    int pointsCount = 0, linesCount = 0;
+    bool inPointsSection = false, inLinesSection = false, inRadiiSection = false;
 
     while (std::getline(file, line)) {
         std::istringstream iss(line);
         std::string token;
         
-        if (line.empty()) continue;
+        // Pula linhas vazias e comentários
+        if (line.empty() || line[0] == '#') continue;
         
-        // Verifica se é um cabeçalho/comando
+        // Detecta seções
         if (line.find("POINTS") == 0) {
-            iss >> token >> pointsCount;
-            readingPoints = true;
-            readingLines = false;
-            readingRadii = false;
+            iss >> token >> pointsCount >> token;
             tempPoints.reserve(pointsCount);
+            inPointsSection = true;
+            inLinesSection = inRadiiSection = false;
             continue;
         }
         else if (line.find("LINES") == 0) {
             iss >> token >> linesCount;
-            readingPoints = false;
-            readingLines = true;
-            readingRadii = false;
+            int totalValues;
+            iss >> totalValues; // Número total de valores na seção LINES
             connections.reserve(linesCount);
+            inLinesSection = true;
+            inPointsSection = inRadiiSection = false;
             continue;
         }
-        else if (line.find("RADIUS") == 0 || line.find("RADII") == 0) {
-            readingPoints = false;
-            readingLines = false;
-            readingRadii = true;
-            radii.reserve(pointsCount);
+        else if (line.find("RADIUS") == 0 || line.find("SCALARS") == 0) {
+            inRadiiSection = true;
+            inPointsSection = inLinesSection = false;
             continue;
         }
-        else if (line.find("SCALARS") == 0 || line.find("LOOKUP_TABLE") == 0) {
-            // Ignora seções de cor/tabela
-            continue;
+        else if (line.find("LOOKUP_TABLE") == 0) {
+            continue; // Ignora tabela de cores
         }
 
-        // Processa dados baseado no que está lendo
-        if (readingPoints && pointsCount > 0) {
+        // Processa pontos
+        if (inPointsSection && pointsCount > 0) {
             float x, y, z;
             if (iss >> x >> y >> z) {
-                tempPoints.push_back(Point2D(x, y));
-                pointsCount--;
+                tempPoints.emplace_back(x, y);
+                if (--pointsCount == 0) inPointsSection = false;
             }
         }
-        else if (readingLines && linesCount > 0) {
-            int numPoints, p1, p2;
+        // Processa linhas
+        else if (inLinesSection && linesCount > 0) {
+            int numPoints;
             if (iss >> numPoints) {
                 if (numPoints == 2) {
+                    int p1, p2;
                     if (iss >> p1 >> p2) {
-                        connections.push_back(std::make_pair(p1, p2));
+                        connections.emplace_back(p1, p2);
                         linesCount--;
                     }
                 }
+                // Pula linhas com mais pontos (polylines)
+                else {
+                    for (int i = 0; i < numPoints; i++) {
+                        int dummy;
+                        iss >> dummy;
+                    }
+                    linesCount--;
+                }
             }
         }
-        else if (readingRadii) {
+        // Processa raios
+        else if (inRadiiSection) {
             float radius;
             while (iss >> radius) {
                 radii.push_back(radius);
@@ -110,26 +113,49 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
 
     file.close();
 
-    // Constrói os segmentos a partir dos pontos e conexões
+    // Constrói segmentos
     if (!tempPoints.empty() && !connections.empty()) {
         points = tempPoints;
+        
+        // Encontra limites para normalização
+        float minX = tempPoints[0].x, maxX = tempPoints[0].x;
+        float minY = tempPoints[0].y, maxY = tempPoints[0].y;
+        
+        for (const auto& p : tempPoints) {
+            minX = std::min(minX, p.x);
+            maxX = std::max(maxX, p.x);
+            minY = std::min(minY, p.y);
+            maxY = std::max(maxY, p.y);
+        }
+        
+        float scaleX = 2.0f / (maxX - minX);
+        float scaleY = 2.0f / (maxY - minY);
+        float scale = std::min(scaleX, scaleY) * 0.8f; // Margem
+        
+        // Centro para normalização
+        float centerX = (minX + maxX) / 2.0f;
+        float centerY = (minY + maxY) / 2.0f;
         
         for (const auto& conn : connections) {
             if (conn.first < points.size() && conn.second < points.size()) {
                 Segment seg;
-                seg.start = points[conn.first];
-                seg.end = points[conn.second];
                 
-                // Usa raios padrão ou dos arrays se disponíveis
+                // Normaliza coordenadas para [-1, 1]
+                seg.start.x = (points[conn.first].x - centerX) * scale;
+                seg.start.y = (points[conn.first].y - centerY) * scale;
+                seg.end.x = (points[conn.second].x - centerX) * scale;
+                seg.end.y = (points[conn.second].y - centerY) * scale;
+                
+                // Define raios (normalizados ou padrão)
                 if (conn.first < radii.size() && conn.second < radii.size()) {
-                    seg.startRadius = radii[conn.first];
-                    seg.endRadius = radii[conn.second];
+                    seg.startRadius = radii[conn.first] * scale * 0.5f;
+                    seg.endRadius = radii[conn.second] * scale * 0.5f;
                 } else {
-                    seg.startRadius = 0.05f;
-                    seg.endRadius = 0.02f;
+                    seg.startRadius = 0.03f;
+                    seg.endRadius = 0.01f;
                 }
                 
-                seg.parentIndex = -1; // Seria necessário calcular hierarquia
+                seg.parentIndex = -1;
                 segments.push_back(seg);
             }
         }
@@ -139,6 +165,7 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
     
     return false;
 }
+
 
 void VTKLoader::generateProceduralTree() {
     segments.clear();

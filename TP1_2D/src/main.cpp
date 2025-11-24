@@ -21,6 +21,7 @@ float translation[2] = {0.0f, 0.0f};
 float scale = 1.0f;
 float rotation = 0.0f;
 bool showWireframe = false;
+bool thickLines = false; // NOVO: modo linhas grossas
 
 // Matriz de transformação
 float transformMatrix[16] = {
@@ -31,14 +32,11 @@ float transformMatrix[16] = {
 };
 
 void loadTreeFiles() {
-    // Adicione aqui os caminhos para seus arquivos VTK
     treeFiles = {
         "data/Nterm_064/tree2D_Nterm0064_step0064.vtk",
         "data/Nterm_128/tree2D_Nterm0128_step0128.vtk",
         "data/Nterm_256/tree2D_Nterm0256_step0256.vtk"
     };
-    
-    // Para teste, crie um arquivo simples se não existir
     cout << "Arquivos de arvore carregados: " << treeFiles.size() << endl;
 }
 
@@ -47,43 +45,32 @@ void updateTransformMatrix() {
     for(int i = 0; i < 16; i++) transformMatrix[i] = 0.0f;
     transformMatrix[0] = transformMatrix[5] = transformMatrix[10] = transformMatrix[15] = 1.0f;
     
+    // Aplica escala
+    transformMatrix[0] = scale;
+    transformMatrix[5] = scale;
+    
+    // Aplica rotação
+    float cosR = cos(rotation);
+    float sinR = sin(rotation);
+    transformMatrix[0] = cosR * scale;
+    transformMatrix[1] = -sinR * scale;
+    transformMatrix[4] = sinR * scale;
+    transformMatrix[5] = cosR * scale;
+    
     // Aplica translação
     transformMatrix[12] = translation[0];
     transformMatrix[13] = translation[1];
-    
-    // Aplica rotação (simplificado - para 2D)
-    float cosR = cos(rotation);
-    float sinR = sin(rotation);
-    float temp[16] = {
-        cosR, -sinR, 0.0f, 0.0f,
-        sinR,  cosR, 0.0f, 0.0f,
-        0.0f,  0.0f, 1.0f, 0.0f,
-        0.0f,  0.0f, 0.0f, 1.0f
-    };
-    
-    // Multiplica matrizes (simplificado)
-    float result[16] = {0};
-    for(int i = 0; i < 4; i++) {
-        for(int j = 0; j < 4; j++) {
-            for(int k = 0; k < 4; k++) {
-                result[i*4+j] += transformMatrix[i*4+k] * temp[k*4+j];
-            }
-        }
-    }
-    
-    // Aplica escala
-    for(int i = 0; i < 8; i++) {
-        result[i] *= scale;
-    }
-    
-    // Copia resultado
-    for(int i = 0; i < 16; i++) {
-        transformMatrix[i] = result[i];
-    }
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
+}
+
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+    scale += yoffset * 0.1f;
+    scale = max(0.1f, min(scale, 5.0f));
+    updateTransformMatrix();
+    cout << "Zoom: " << scale << endl;
 }
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -100,11 +87,16 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
                 updateTransformMatrix();
                 cout << "Transformacoes resetadas" << endl;
                 break;
-            case GLFW_KEY_W:
+            case GLFW_KEY_T: // MUDEI: T para Wireframe (em vez de W)
                 // Alternar wireframe
                 showWireframe = !showWireframe;
                 glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
                 cout << "Wireframe: " << (showWireframe ? "ON" : "OFF") << endl;
+                break;
+            case GLFW_KEY_L: // NOVO: L para Linhas Grossas
+                thickLines = !thickLines;
+                treeRenderer.setLineWidth(thickLines ? 5.0f : 2.0f);
+                cout << "Linhas grossas: " << (thickLines ? "ON" : "OFF") << endl;
                 break;
             case GLFW_KEY_RIGHT:
                 // Próxima árvore
@@ -125,28 +117,29 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
                 }
                 break;
             case GLFW_KEY_1:
-                // Cor vermelha
                 treeRenderer.setColor(1.0f, 0.0f, 0.0f);
                 cout << "Cor: Vermelho" << endl;
                 break;
             case GLFW_KEY_2:
-                // Cor verde
                 treeRenderer.setColor(0.0f, 1.0f, 0.0f);
                 cout << "Cor: Verde" << endl;
                 break;
             case GLFW_KEY_3:
-                // Cor azul
                 treeRenderer.setColor(0.0f, 0.0f, 1.0f);
                 cout << "Cor: Azul" << endl;
+                break;
+            case GLFW_KEY_4: // NOVO: Cor original
+                treeRenderer.setColor(0.2f, 0.8f, 0.3f);
+                cout << "Cor: Original (Verde)" << endl;
                 break;
         }
     }
 }
 
 void processInput(GLFWwindow* window) {
-    // Controles de transformação
     bool transformed = false;
     
+    // Movimento com WASD (agora W está livre para movimento)
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { 
         translation[0] -= 0.01f; 
         transformed = true;
@@ -155,7 +148,7 @@ void processInput(GLFWwindow* window) {
         translation[0] += 0.01f; 
         transformed = true;
     }
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { 
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { // W agora é só movimento
         translation[1] += 0.01f; 
         transformed = true;
     }
@@ -163,19 +156,13 @@ void processInput(GLFWwindow* window) {
         translation[1] -= 0.01f; 
         transformed = true;
     }
+    
+    // Rotação com Q/E (mais intuitivo)
     if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) { 
-        scale *= 1.01f; 
-        transformed = true;
-    }
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) { 
-        scale /= 1.01f; 
-        transformed = true;
-    }
-    if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) { 
         rotation += 0.02f; 
         transformed = true;
     }
-    if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) { 
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) { 
         rotation -= 0.02f; 
         transformed = true;
     }
@@ -206,6 +193,7 @@ int main() {
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetKeyCallback(window, key_callback);
+    glfwSetScrollCallback(window, scroll_callback);
 
     // Inicializa GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
@@ -237,13 +225,18 @@ int main() {
     cout << "Controles:" << endl;
     cout << "ESC - Sair" << endl;
     cout << "R - Resetar visualizacao" << endl;
-    cout << "W - Alternar wireframe" << endl;
+    cout << "WASD - Mover (W=cima, S=baixo, A=esquerda, D=direita)" << endl;
+    cout << "Q/E - Rotacionar" << endl;
+    cout << "Scroll Mouse - Zoom" << endl;
+    cout << "T - Alternar Wireframe" << endl;
+    cout << "L - Alternar Linhas Grossas" << endl;
     cout << "SETAS - Navegar entre arvores" << endl;
-    cout << "A/D - Mover horizontalmente" << endl;
-    cout << "W/S - Mover verticalmente" << endl;
-    cout << "Q/E - Zoom in/out" << endl;
-    cout << "Z/X - Rotacionar" << endl;
-    cout << "1/2/3 - Mudar cor (Vermelho/Verde/Azul)" << endl;
+    cout << "1/2/3/4 - Cores (Vermelho/Verde/Azul/Original)" << endl;
+    cout << endl;
+    cout << "=== Sobre Wireframe ===" << endl;
+    cout << "Wireframe mostra apenas as arestas dos objetos." << endl;
+    cout << "No modo atual (linhas), o efeito pode ser sutil." << endl;
+    cout << "Útil para ver a estrutura sem preenchimento." << endl;
 
     // Loop principal
     while (!glfwWindowShouldClose(window)) {
@@ -251,7 +244,8 @@ int main() {
         
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Renderiza árvore
+        // Aplica transformações e renderiza
+        treeRenderer.applyTransform(transformMatrix);
         treeRenderer.render(vtkLoader.getSegments());
 
         glfwSwapBuffers(window);

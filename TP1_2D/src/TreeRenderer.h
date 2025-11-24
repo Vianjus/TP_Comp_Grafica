@@ -14,6 +14,7 @@ public:
     void render(const std::vector<Segment>& segments);
     void setColor(float r, float g, float b) { color[0] = r; color[1] = g; color[2] = b; }
     void setLineWidth(float width) { lineWidth = width; }
+    void applyTransform(const float* transformMatrix); // NOVO MÉTODO
     
 private:
     unsigned int shaderProgram;
@@ -21,7 +22,7 @@ private:
     float color[3];
     float lineWidth;
     
-    std::vector<Segment> createTestTree(); // NOVO MÉTODO
+    std::vector<Segment> createTestTree();
     void renderTestTree(const std::vector<Segment>& segments);
     void renderSegments(const std::vector<Segment>& segments);
     
