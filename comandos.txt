@@ -5,3 +5,8 @@ g++ -g -std=c++17 -I include -L lib main.cpp src/glad.c -lglfw3dll
 Comando para rodar:
 
 ./a
+
+Creditos:
+- Instalar e preparar o Opengl
+https://terminalroot.com.br/2024/02/tutorial-de-opengl-para-iniciantes.html
+
