@@ -12,19 +12,22 @@ public:
     
     bool initialize();
     void render(const std::vector<Segment>& segments);
-    void setColor(float r, float g, float b) { color[0] = r; color[1] = g; color[2] = b; }
     void setLineWidth(float width) { lineWidth = width; }
     void applyTransform(const float* transformMatrix);
+    void setColorMode(bool monochrome) { useMonochrome = monochrome; }
     
 private:
     unsigned int shaderProgram;
     unsigned int VAO, VBO;
-    float color[3];
     float lineWidth;
+    bool useMonochrome = false;
     
     std::vector<Segment> createTestTree();
-    void renderTestTree(const std::vector<Segment>& segments);
     void renderSegments(const std::vector<Segment>& segments);
+    
+    // NOVO: Calcula hierarquia para coloração
+    std::vector<int> calculateHierarchyDepth(const std::vector<Segment>& segments);
+    int findRootSegment(const std::vector<Segment>& segments);
     
     unsigned int compileShader(const std::string& source, unsigned int type);
     unsigned int createShaderProgram(const std::string& vertexSource, const std::string& fragmentSource);

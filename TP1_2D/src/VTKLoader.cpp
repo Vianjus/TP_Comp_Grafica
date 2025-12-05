@@ -5,6 +5,7 @@
 #include <random>
 #include <cmath>
 #include <algorithm>
+#include <queue>
 
 VTKLoader::VTKLoader() {}
 
@@ -15,13 +16,13 @@ bool VTKLoader::loadFile(const std::string& filename) {
     points.clear();
 
     if (loadRealVTKFile(filename)) {
-        std::cout << "✓ Arquivo VTK carregado: " << segments.size() << " segmentos" << std::endl;
+        std::cout << "[+] Arquivo VTK carregado: " << segments.size() << " segmentos" << std::endl;
         return true;
     }
     
-    std::cout << "✗ Arquivo não encontrado, gerando árvore procedural" << std::endl;
+    std::cout << "[!] Arquivo não encontrado, gerando árvore procedural" << std::endl;
     generateProceduralTree();
-    std::cout << "✓ Árvore procedural: " << segments.size() << " segmentos" << std::endl;
+    std::cout << "[+] Árvore procedural: " << segments.size() << " segmentos" << std::endl;
     
     return true;
 }
@@ -237,6 +238,45 @@ void VTKLoader::generateProceduralTree() {
     // Ramos médios
     generateBranch(Point2D(0.0f, -0.3f), Point2D(0.9f, 0.2f), 0.25f, 0.03f, 3, 0, generateBranch);
     generateBranch(Point2D(0.0f, -0.3f), Point2D(-0.9f, 0.2f), 0.25f, 0.03f, 3, 0, generateBranch);
+}
+
+std::vector<int> VTKLoader::calculateSegmentHierarchy() {
+    std::vector<int> hierarchy(segments.size(), -1);
+    
+    if (segments.empty()) return hierarchy;
+    
+    // Encontra segmento raiz (assumindo que é o que tem o menor Y)
+    int rootIndex = 0;
+    float minY = segments[0].start.y;
+    for (int i = 1; i < segments.size(); i++) {
+        if (segments[i].start.y < minY) {
+            minY = segments[i].start.y;
+            rootIndex = i;
+        }
+    }
+    
+    hierarchy[rootIndex] = 0;
+    std::queue<int> q;
+    q.push(rootIndex);
+    
+    while (!q.empty()) {
+        int current = q.front();
+        q.pop();
+        
+        // Encontra segmentos conectados ao final deste segmento
+        for (int i = 0; i < segments.size(); i++) {
+            if (hierarchy[i] == -1) {
+                float dist = std::abs(segments[i].start.x - segments[current].end.x) + 
+                           std::abs(segments[i].start.y - segments[current].end.y);
+                if (dist < 0.01f) { // São conectados
+                    hierarchy[i] = hierarchy[current] + 1;
+                    q.push(i);
+                }
+            }
+        }
+    }
+    
+    return hierarchy;
 }
 
 void VTKLoader::clear() {

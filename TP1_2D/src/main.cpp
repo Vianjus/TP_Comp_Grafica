@@ -2,6 +2,8 @@
 #include <vector>
 #include <string>
 #include <cmath>
+#include <chrono>
+#include <algorithm>
 #include "glad/glad.h"
 #include "GLFW/glfw3.h"
 #include "VTKLoader.h"
@@ -9,19 +11,57 @@
 
 using namespace std;
 
-// Variáveis globais
+// =============================================
+// Estruturas e Constantes
+// =============================================
+
+struct CameraState {
+    float translation[2] = {0.0f, 0.0f};
+    float scale = 1.0f;
+    float rotation = 0.0f;
+    
+    float targetTranslation[2] = {0.0f, 0.0f};
+    float targetScale = 1.0f;
+    float targetRotation = 0.0f;
+};
+
+struct AppConfig {
+    float backgroundColor[3] = {0.05f, 0.05f, 0.08f}; // Fundo mais escuro para contraste
+    float moveSpeed = 0.0005f;
+    float rotationSpeed = 0.0005f;
+    float zoomSpeed = 0.4f;
+    float smoothFactor = 3.0f;
+    float dragSensitivity = 0.0013f;
+    float minScale = 0.1f;
+    float maxScale = 5.0f;
+    float translationLimit = 2.0f;
+};
+
+struct MouseState {
+    bool isDragging = false;
+    double lastX = 0.0;
+    double lastY = 0.0;
+};
+
+// =============================================
+// Variáveis Globais
+// =============================================
+
+// Estado da aplicação
 TreeRenderer treeRenderer;
 VTKLoader vtkLoader;
 vector<string> treeFiles;
 size_t currentTreeIndex = 0;
 
-// Controles
-float backgroundColor[3] = {0.1f, 0.1f, 0.1f};
-float translation[2] = {0.0f, 0.0f};
-float scale = 1.0f;
-float rotation = 0.0f;
+// Estado da câmera e controles
+CameraState camera;
+AppConfig config;
+MouseState mouse;
+
+// Flags de interface
 bool showWireframe = false;
 bool thickLines = false;
+bool monochromeMode = false; // NOVO: Modo monocromático
 
 // Matriz de transformação
 float transformMatrix[16] = {
@@ -31,153 +71,243 @@ float transformMatrix[16] = {
     0.0f, 0.0f, 0.0f, 1.0f
 };
 
+// Controle de tempo
+chrono::steady_clock::time_point lastTime;
+
+// =============================================
+// Declarações de Funções
+// =============================================
+
+void loadTreeFiles();
+void updateTransformMatrix();
+void updateSmoothTransform(float deltaTime);
+void resetCamera();
+void printControls();
+
+// Callbacks GLFW
+void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
+void cursor_position_callback(GLFWwindow* window, double xpos, double ypos);
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
+
+// Processamento de entrada
+void processInput(GLFWwindow* window);
+void handleKeyPress(int key);
+void handleTreeNavigation(int direction);
+void toggleColorMode(); // ALTERADO: Agora só alterna entre gradiente e monocromático
+
+// =============================================
+// Implementação das Funções
+// =============================================
+
 void loadTreeFiles() {
     treeFiles = {
         "data/Nterm_064/tree2D_Nterm0064_step0064.vtk",
-        "data/Nterm_064/tree2D_Nterm0064_step0008.vtk",
+        "data/Nterm_064/tree2D_Nterm0064_step0008.vtk", 
         "data/Nterm_128/tree2D_Nterm0128_step0128.vtk",
         "data/Nterm_256/tree2D_Nterm0256_step0256.vtk"
     };
-    cout << "Arquivos de arvore carregados: " << treeFiles.size() << endl;
+    cout << "Arquivos de árvore carregados: " << treeFiles.size() << endl;
 }
 
 void updateTransformMatrix() {
-    // Reset para matriz identidade
-    for(int i = 0; i < 16; i++) transformMatrix[i] = 0.0f;
+    // Matriz identidade
+    fill_n(transformMatrix, 16, 0.0f);
     transformMatrix[0] = transformMatrix[5] = transformMatrix[10] = transformMatrix[15] = 1.0f;
     
-    // Aplica escala
-    transformMatrix[0] = scale;
-    transformMatrix[5] = scale;
-    
-    // Aplica rotação
-    float cosR = cos(rotation);
-    float sinR = sin(rotation);
-    transformMatrix[0] = cosR * scale;
-    transformMatrix[1] = -sinR * scale;
-    transformMatrix[4] = sinR * scale;
-    transformMatrix[5] = cosR * scale;
+    // Aplica rotação e escala
+    float cosR = cos(camera.rotation);
+    float sinR = sin(camera.rotation);
+    transformMatrix[0] = cosR * camera.scale;
+    transformMatrix[1] = -sinR * camera.scale;
+    transformMatrix[4] = sinR * camera.scale;
+    transformMatrix[5] = cosR * camera.scale;
     
     // Aplica translação
-    transformMatrix[12] = translation[0];
-    transformMatrix[13] = translation[1];
+    transformMatrix[12] = camera.translation[0];
+    transformMatrix[13] = camera.translation[1];
 }
+
+void updateSmoothTransform(float deltaTime) {
+    // Interpolação suave usando LERP
+    auto lerp = [](float current, float target, float factor, float deltaTime) {
+        return current + (target - current) * factor * deltaTime;
+    };
+    
+    camera.translation[0] = lerp(camera.translation[0], camera.targetTranslation[0], 
+                                config.smoothFactor, deltaTime);
+    camera.translation[1] = lerp(camera.translation[1], camera.targetTranslation[1], 
+                                config.smoothFactor, deltaTime);
+    camera.rotation = lerp(camera.rotation, camera.targetRotation, 
+                          config.smoothFactor, deltaTime);
+    camera.scale = lerp(camera.scale, camera.targetScale, 
+                       config.smoothFactor, deltaTime);
+    
+    updateTransformMatrix();
+}
+
+void resetCamera() {
+    camera.targetTranslation[0] = camera.targetTranslation[1] = 0.0f;
+    camera.targetScale = 1.0f;
+    camera.targetRotation = 0.0f;
+    cout << "Transformações resetadas" << endl;
+}
+
+void limitCameraValues() {
+    camera.targetTranslation[0] = clamp(camera.targetTranslation[0], 
+                                       -config.translationLimit, config.translationLimit);
+    camera.targetTranslation[1] = clamp(camera.targetTranslation[1], 
+                                       -config.translationLimit, config.translationLimit);
+    camera.targetScale = clamp(camera.targetScale, config.minScale, config.maxScale);
+}
+
+// =============================================
+// Callbacks GLFW
+// =============================================
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
 }
 
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
-    scale += yoffset * 0.1f;
-    scale = max(0.1f, min(scale, 5.0f));
-    updateTransformMatrix();
-    cout << "Zoom: " << scale << endl;
-}
-
-void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (action == GLFW_PRESS) {
-        switch (key) {
-            case GLFW_KEY_ESCAPE:
-                glfwSetWindowShouldClose(window, true);
-                break;
-            case GLFW_KEY_R:
-                // Reset transformações
-                translation[0] = translation[1] = 0.0f;
-                scale = 1.0f;
-                rotation = 0.0f;
-                updateTransformMatrix();
-                cout << "Transformacoes resetadas" << endl;
-                break;
-            case GLFW_KEY_T:
-                // Alternar wireframe
-                showWireframe = !showWireframe;
-                glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
-                cout << "Wireframe: " << (showWireframe ? "ON" : "OFF") << endl;
-                break;
-            case GLFW_KEY_L:
-                thickLines = !thickLines;
-                treeRenderer.setLineWidth(thickLines ? 5.0f : 2.0f);
-                cout << "Linhas grossas: " << (thickLines ? "ON" : "OFF") << endl;
-                break;
-            case GLFW_KEY_RIGHT:
-                // Próxima árvore
-                if (!treeFiles.empty()) {
-                    currentTreeIndex = (currentTreeIndex + 1) % treeFiles.size();
-                    if (vtkLoader.loadFile(treeFiles[currentTreeIndex])) {
-                        cout << "Arvore carregada: " << treeFiles[currentTreeIndex] << endl;
-                    }
-                }
-                break;
-            case GLFW_KEY_LEFT:
-                // Árvore anterior
-                if (!treeFiles.empty()) {
-                    currentTreeIndex = (currentTreeIndex == 0) ? treeFiles.size() - 1 : currentTreeIndex - 1;
-                    if (vtkLoader.loadFile(treeFiles[currentTreeIndex])) {
-                        cout << "Arvore carregada: " << treeFiles[currentTreeIndex] << endl;
-                    }
-                }
-                break;
-            case GLFW_KEY_1:
-                treeRenderer.setColor(1.0f, 0.0f, 0.0f);
-                cout << "Cor: Vermelho" << endl;
-                break;
-            case GLFW_KEY_2:
-                treeRenderer.setColor(0.0f, 1.0f, 0.0f);
-                cout << "Cor: Verde" << endl;
-                break;
-            case GLFW_KEY_3:
-                treeRenderer.setColor(0.0f, 0.0f, 1.0f);
-                cout << "Cor: Azul" << endl;
-                break;
-            case GLFW_KEY_4: //Cor original
-                treeRenderer.setColor(0.2f, 0.8f, 0.3f);
-                cout << "Cor: Original (Verde)" << endl;
-                break;
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        mouse.isDragging = (action == GLFW_PRESS);
+        
+        if (mouse.isDragging) {
+            glfwGetCursorPos(window, &mouse.lastX, &mouse.lastY);
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+        } else {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
     }
 }
 
-void processInput(GLFWwindow* window) {
-    bool transformed = false;
-    
-    // Movimento com WASD
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) { 
-        translation[0] -= 0.01f; 
-        transformed = true;
-    }
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) { 
-        translation[0] += 0.01f; 
-        transformed = true;
-    }
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) { 
-        translation[1] += 0.01f; 
-        transformed = true;
-    }
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) { 
-        translation[1] -= 0.01f; 
-        transformed = true;
-    }
-    
-    // Rotação com Q/E
-    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) { 
-        rotation += 0.02f; 
-        transformed = true;
-    }
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) { 
-        rotation -= 0.02f; 
-        transformed = true;
-    }
-    
-    if (transformed) {
-        updateTransformMatrix();
+void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
+    if (mouse.isDragging) {
+        float deltaX = static_cast<float>(xpos - mouse.lastX) * config.dragSensitivity;
+        float deltaY = static_cast<float>(mouse.lastY - ypos) * config.dragSensitivity;
+        
+        // Compensa o zoom para movimento consistente
+        float zoomCompensation = 1.0f / camera.scale;
+        camera.targetTranslation[0] += deltaX * zoomCompensation;
+        camera.targetTranslation[1] += deltaY * zoomCompensation;
+        
+        mouse.lastX = xpos;
+        mouse.lastY = ypos;
+        limitCameraValues();
     }
 }
 
-int main() {
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+    float zoomAmount = static_cast<float>(yoffset) * 0.1f * config.zoomSpeed;
+    camera.targetScale += zoomAmount;
+    limitCameraValues();
+    cout << "Zoom: " << camera.targetScale << endl;
+}
 
-    // Inicializa GLFW
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    if (action == GLFW_PRESS) {
+        handleKeyPress(key);
+    }
+}
+
+// =============================================
+// Processamento de Entrada
+// =============================================
+
+void handleKeyPress(int key) {
+    switch (key) {
+        case GLFW_KEY_ESCAPE:
+            glfwSetWindowShouldClose(glfwGetCurrentContext(), true);
+            break;
+        case GLFW_KEY_R:
+            resetCamera();
+            break;
+        case GLFW_KEY_T:
+            showWireframe = !showWireframe;
+            glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
+            cout << "Wireframe: " << (showWireframe ? "ON" : "OFF") << endl;
+            break;
+        case GLFW_KEY_L:
+            thickLines = !thickLines;
+            treeRenderer.setLineWidth(thickLines ? 5.0f : 2.0f);
+            cout << "Linhas grossas: " << (thickLines ? "ON" : "OFF") << endl;
+            break;
+        case GLFW_KEY_RIGHT:
+            handleTreeNavigation(1);
+            break;
+        case GLFW_KEY_LEFT:
+            handleTreeNavigation(-1);
+            break;
+        case GLFW_KEY_C: // NOVO: Alternar entre gradiente e monocromático
+            toggleColorMode();
+            break;
+    }
+}
+
+void handleTreeNavigation(int direction) {
+    if (treeFiles.empty()) return;
+    
+    currentTreeIndex = (direction > 0) 
+        ? (currentTreeIndex + 1) % treeFiles.size()
+        : (currentTreeIndex == 0) ? treeFiles.size() - 1 : currentTreeIndex - 1;
+    
+    if (vtkLoader.loadFile(treeFiles[currentTreeIndex])) {
+        cout << "Árvore carregada: " << treeFiles[currentTreeIndex] << endl;
+    }
+}
+
+void toggleColorMode() {
+    monochromeMode = !monochromeMode;
+    treeRenderer.setColorMode(monochromeMode);
+    cout << "Modo de cor: " << (monochromeMode ? "Monocromático Verde" : "Gradiente Vermelho-Violeta") << endl;
+}
+
+void processInput(GLFWwindow* window) {
+    // Movimento com WASD
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) 
+        camera.targetTranslation[0] -= config.moveSpeed;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) 
+        camera.targetTranslation[0] += config.moveSpeed;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) 
+        camera.targetTranslation[1] += config.moveSpeed;
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) 
+        camera.targetTranslation[1] -= config.moveSpeed;
+    
+    // Rotação com Q/E
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) 
+        camera.targetRotation += config.rotationSpeed;
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) 
+        camera.targetRotation -= config.rotationSpeed;
+    
+    limitCameraValues();
+}
+
+void printControls() {
+    cout << "=== TP1 - Visualizador de Árvores Arteriais 2D ===" << endl;
+    cout << "Controles:" << endl;
+    cout << "ESC - Sair" << endl;
+    cout << "R - Resetar visualização" << endl;
+    cout << "WASD - Mover suavemente" << endl;
+    cout << "Clique e Arraste - Mover com mouse" << endl;
+    cout << "Q/E - Rotacionar suavemente" << endl;
+    cout << "Scroll Mouse - Zoom suave" << endl;
+    cout << "T - Alternar Wireframe" << endl;
+    cout << "L - Alternar Linhas Grossas" << endl;
+    cout << "C - Alternar Modo de Cor" << endl;
+    cout << "SETAS - Navegar entre árvores (" << treeFiles.size() << " disponíveis)" << endl;
+    cout << endl;
+}
+
+// =============================================
+// Função Principal
+// =============================================
+
+int main() {
+    // Inicialização GLFW
     if (!glfwInit()) {
-        cout << "Falha ao inicializar GLFW" << endl;;
+        cerr << "Falha ao inicializar GLFW" << endl;
         return -1;
     }
 
@@ -185,67 +315,70 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(1200, 800, "TP1 - Visualizaçâo de Árvores Arteriais 2D", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(1200, 800, 
+                                         "TP1 - Visualização de Árvores Arteriais 2D", 
+                                         NULL, NULL);
     if (!window) {
-        cout << "Falha ao criar janela GLFW" << endl;
+        cerr << "Falha ao criar janela GLFW" << endl;
         glfwTerminate();
         return -1;
     }
 
     glfwMakeContextCurrent(window);
+    
+    // Configura callbacks
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetKeyCallback(window, key_callback);
     glfwSetScrollCallback(window, scroll_callback);
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
+    glfwSetCursorPosCallback(window, cursor_position_callback);
 
-    // Inicializa GLAD
+    // Inicialização GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        cout << "Falha ao iniciar GLAD\n";
+        cerr << "Falha ao iniciar GLAD" << endl;
         return -1;
     }
 
-    // Inicializa renderizador
+    // Inicialização do renderizador
     if (!treeRenderer.initialize()) {
-        cout << "Falha ao iniciar renderizacao da arvore\n";
+        cerr << "Falha ao iniciar renderização da árvore" << endl;
         return -1;
     }
 
-    // Carrega arquivos
+    // Carrega dados
     loadTreeFiles();
     if (!treeFiles.empty()) {
         vtkLoader.loadFile(treeFiles[0]);
     }
 
     // Configuração OpenGL
-    glClearColor(backgroundColor[0], backgroundColor[1], backgroundColor[2], 1.0f);
+    glClearColor(config.backgroundColor[0], config.backgroundColor[1], 
+                 config.backgroundColor[2], 1.0f);
     glEnable(GL_LINE_SMOOTH);
     glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
     
-    // Inicializa matriz de transformação
+    // Inicialização
     updateTransformMatrix();
-
-    cout << "=== TP1 - Visualizador de Arvores Arteriais 2D ===" << endl;
-    cout << "Controles:" << endl;
-    cout << "ESC - Sair" << endl;
-    cout << "R - Resetar visualizacao" << endl;
-    cout << "WASD - Mover (W = cima, S = baixo, A = esquerda, D = direita)" << endl;
-    cout << "Q/E - Rotacionar" << endl;
-    cout << "Scroll Mouse - Zoom" << endl;
-    cout << "T - Alternar Wireframe" << endl;
-    cout << "L - Alternar Linhas Grossas" << endl;
-    cout << "SETAS - Navegar entre arvores" << endl;
-    cout << "1/2/3/4 - Cores (Vermelho/Verde/Azul/Original)" << endl;
-    cout << endl;
+    lastTime = chrono::steady_clock::now();
+    printControls();
 
     // Loop principal
     while (!glfwWindowShouldClose(window)) {
-        processInput(window);
+        // Calcula delta time
+        auto currentTime = chrono::steady_clock::now();
+        float deltaTime = chrono::duration<float>(currentTime - lastTime).count();
+        lastTime = currentTime;
+        deltaTime = min(deltaTime, 0.1f); // Limita para evitar problemas
         
+        // Processamento
+        processInput(window);
+        updateSmoothTransform(deltaTime);
+        
+        // Renderização
         glClear(GL_COLOR_BUFFER_BIT);
-
-        // Aplica transformações e renderiza
         treeRenderer.applyTransform(transformMatrix);
         treeRenderer.render(vtkLoader.getSegments());
-
+        
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
