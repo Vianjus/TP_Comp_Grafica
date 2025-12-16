@@ -11,7 +11,8 @@
 #include <functional>
 
 TreeRenderer::TreeRenderer() : shaderProgram(0), VAO(0), VBO(0), lineWidth(2.0f), 
-                               useMonochrome(false), gradientMode(false), thicknessMode(false) {}
+                               useMonochrome(false), gradientMode(false), 
+                               thicknessMode(false), descendantsColorMode(false) {} // NOVO
 
 TreeRenderer::~TreeRenderer() {
     if (VAO) glDeleteVertexArrays(1, &VAO);
@@ -190,6 +191,11 @@ TreeRenderer::RenderData TreeRenderer::prepareRenderData(const std::vector<Segme
             r = 1.0f - normalizedDepth * 0.5f;
             g = 0.0f;
             b = normalizedDepth * 0.5f;
+        } else if (descendantsColorMode) {
+            // Gradiente por número de descendentes 
+            r = sqrt(normalizedDescendants);           
+            g = 0.0f;
+            b = 1.0f - normalizedDescendants * normalizedDescendants;    
         } else {
             r = g = b = 1.0f;
         }

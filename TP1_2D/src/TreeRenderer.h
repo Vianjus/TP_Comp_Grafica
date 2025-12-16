@@ -17,6 +17,7 @@ public:
     void setColorMode(bool monochrome) { useMonochrome = monochrome; }
     void setGradientMode(bool enabled) { gradientMode = enabled; }
     void setThicknessMode(bool enabled) { thicknessMode = enabled; }
+    void setDescendantsColorMode(bool enabled) { descendantsColorMode = enabled; }
     
 private:
     struct RenderData {
@@ -31,6 +32,7 @@ private:
     bool useMonochrome;
     bool gradientMode;
     bool thicknessMode;
+    bool descendantsColorMode;
     
     void calculateNodeInfo(const std::vector<Segment>& segments,
                           std::vector<int>& depth,

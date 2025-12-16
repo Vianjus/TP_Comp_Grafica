@@ -63,6 +63,7 @@ bool showWireframe = false;
 bool monochromeMode = false;
 bool gradientMode = false;
 bool thicknessMode = false;
+bool descendantsColorMode = false;
 
 float transformMatrix[16] = {
     1.0f, 0.0f, 0.0f, 0.0f,
@@ -285,11 +286,11 @@ void handleKeyPress(int key) {
         case GLFW_KEY_R:
             resetCamera();
             break;
-        case GLFW_KEY_T:
-            showWireframe = !showWireframe;
-            glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
-            cout << "Wireframe: " << (showWireframe ? "ON" : "OFF") << endl;
-            break;
+        // case GLFW_KEY_T:
+        //     showWireframe = !showWireframe;
+        //     glPolygonMode(GL_FRONT_AND_BACK, showWireframe ? GL_LINE : GL_FILL);
+        //     cout << "Wireframe: " << (showWireframe ? "ON" : "OFF") << endl;
+        //     break;
         case GLFW_KEY_L:
             thicknessMode = !thicknessMode;
             treeRenderer.setThicknessMode(thicknessMode);
@@ -302,21 +303,43 @@ void handleKeyPress(int key) {
             handleTreeNavigation(-1);
             break;
         case GLFW_KEY_C:
-            if (gradientMode) {
-                gradientMode = false;
+            // Ciclo: Branco -> Monocromático Verde -> Gradiente Violeta-Vermelho -> Gradiente Azul-Vermelho (descendentes)
+            if (!monochromeMode && !gradientMode && !descendantsColorMode) {
+                // Primeiro: Modo monocromático verde
                 monochromeMode = true;
-                treeRenderer.setGradientMode(false);
+                gradientMode = false;
+                descendantsColorMode = false;
                 treeRenderer.setColorMode(true);
+                treeRenderer.setGradientMode(false);
+                treeRenderer.setDescendantsColorMode(false);
                 cout << "Modo monocromático: ON (Verde)" << endl;
-            } else if (monochromeMode) {
+            } else if (monochromeMode && !gradientMode && !descendantsColorMode) {
+                // Segundo: Gradiente violeta-vermelho (profundidade)
                 monochromeMode = false;
+                gradientMode = true;
+                descendantsColorMode = false;
+                treeRenderer.setColorMode(false);
+                treeRenderer.setGradientMode(true);
+                treeRenderer.setDescendantsColorMode(false);
+                cout << "Modo gradiente por profundidade: ON (Violeta->Vermelho)" << endl;
+            } else if (!monochromeMode && gradientMode && !descendantsColorMode) {
+                // Terceiro: Gradiente azul-vermelho (descendentes)
+                monochromeMode = false;
+                gradientMode = false;
+                descendantsColorMode = true;
                 treeRenderer.setColorMode(false);
                 treeRenderer.setGradientMode(false);
-                cout << "Modo de cor: OFF (Branco)" << endl;
+                treeRenderer.setDescendantsColorMode(true);
+                cout << "Modo gradiente por descendentes: ON (Azul->Vermelho)" << endl;
             } else {
-                gradientMode = true;
-                treeRenderer.setGradientMode(true);
-                cout << "Modo gradiente: ON (Violeta->Vermelho)" << endl;
+                // Quarto: Volta para branco
+                monochromeMode = false;
+                gradientMode = false;
+                descendantsColorMode = false;
+                treeRenderer.setColorMode(false);
+                treeRenderer.setGradientMode(false);
+                treeRenderer.setDescendantsColorMode(false);
+                cout << "Modo de cor: OFF (Branco)" << endl;
             }
             break;
         case GLFW_KEY_I:
@@ -369,9 +392,9 @@ void printControls() {
     cout << "Clique e Arraste - Mover com mouse" << endl;
     cout << "Q/E - Rotacionar suavemente" << endl;
     cout << "Scroll Mouse - Zoom suave" << endl;
-    cout << "T - Alternar Wireframe" << endl;
+    //cout << "T - Alternar Wireframe" << endl;
     cout << "L - Alternar Linhas Adaptativas" << endl;
-    cout << "C - Alternar Modo de Cor" << endl;
+    cout << "C - Alternar Modo de Cor (Branco -> Verde -> Profundidade -> Descendentes)" << endl;
     cout << "SETAS - Navegar entre árvores" << endl;
     cout << "I - Mostrar informação da árvore atual" << endl;
     cout << endl;
