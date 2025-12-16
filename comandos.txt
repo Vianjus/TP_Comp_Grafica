@@ -1,10 +1,10 @@
 Comando para compilar:
 
-g++ -g -std=c++17 -I include -L lib main.cpp src/glad.c -lglfw3dll
+make
 
 Comando para rodar:
 
-./a
+./programa
 
 Creditos:
 - Instalar e preparar o Opengl

@@ -35,7 +35,6 @@ private:
     
     void generateProceduralTree();
     bool loadRealVTKFile(const std::string& filename);
-    std::vector<int> calculateSegmentHierarchy();
 };
 
 #endif

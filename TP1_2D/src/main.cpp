@@ -4,15 +4,17 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+#include <filesystem>  
 #include "glad/glad.h"
 #include "GLFW/glfw3.h"
 #include "VTKLoader.h"
 #include "TreeRenderer.h"
 
 using namespace std;
+namespace fs = std::filesystem;  
 
 // =============================================
-// Estruturas e Constantes
+// Estruturas
 // =============================================
 
 struct CameraState {
@@ -26,7 +28,7 @@ struct CameraState {
 };
 
 struct AppConfig {
-    float backgroundColor[3] = {0.05f, 0.05f, 0.08f}; // Fundo mais escuro para contraste
+    float backgroundColor[3] = {0.05f, 0.05f, 0.08f};
     float moveSpeed = 0.0005f;
     float rotationSpeed = 0.0005f;
     float zoomSpeed = 0.4f;
@@ -47,23 +49,21 @@ struct MouseState {
 // Variáveis Globais
 // =============================================
 
-// Estado da aplicação
 TreeRenderer treeRenderer;
 VTKLoader vtkLoader;
 vector<string> treeFiles;
+vector<string> treeFileNames;
 size_t currentTreeIndex = 0;
 
-// Estado da câmera e controles
 CameraState camera;
 AppConfig config;
 MouseState mouse;
 
-// Flags de interface
 bool showWireframe = false;
-bool thickLines = false;
-bool monochromeMode = false; // NOVO: Modo monocromático
+bool monochromeMode = false;
+bool gradientMode = false;
+bool thicknessMode = false;
 
-// Matriz de transformação
 float transformMatrix[16] = {
     1.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f, 
@@ -71,11 +71,10 @@ float transformMatrix[16] = {
     0.0f, 0.0f, 0.0f, 1.0f
 };
 
-// Controle de tempo
 chrono::steady_clock::time_point lastTime;
 
 // =============================================
-// Declarações de Funções
+// Declarações
 // =============================================
 
 void loadTreeFiles();
@@ -83,32 +82,94 @@ void updateTransformMatrix();
 void updateSmoothTransform(float deltaTime);
 void resetCamera();
 void printControls();
+void printCurrentTreeInfo();
 
-// Callbacks GLFW
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 void cursor_position_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
 
-// Processamento de entrada
 void processInput(GLFWwindow* window);
 void handleKeyPress(int key);
 void handleTreeNavigation(int direction);
-void toggleColorMode(); // ALTERADO: Agora só alterna entre gradiente e monocromático
 
 // =============================================
-// Implementação das Funções
+// Implementação
 // =============================================
 
 void loadTreeFiles() {
-    treeFiles = {
-        "data/Nterm_064/tree2D_Nterm0064_step0064.vtk",
-        "data/Nterm_064/tree2D_Nterm0064_step0008.vtk", 
-        "data/Nterm_128/tree2D_Nterm0128_step0128.vtk",
-        "data/Nterm_256/tree2D_Nterm0256_step0256.vtk"
-    };
-    cout << "Arquivos de árvore carregados: " << treeFiles.size() << endl;
+    treeFiles.clear();
+    treeFileNames.clear();
+    
+    cout << "Procurando arquivos VTK..." << endl;
+    
+    vector<string> folders = {"data/Nterm_064", "data/Nterm_128", "data/Nterm_256"};
+    int totalFiles = 0;
+    
+    for (const auto& folder : folders) {
+        if (!fs::exists(folder) || !fs::is_directory(folder)) {
+            cout << "  [!] Pasta não encontrada: " << folder << endl;
+            continue;
+        }
+        
+        cout << "Lendo pasta: " << folder << endl;
+        
+        for (const auto& entry : fs::directory_iterator(folder)) {
+            if (!entry.is_regular_file()) continue;
+            
+            string path = entry.path().string();
+            if (entry.path().extension() != ".vtk") continue;
+            
+            treeFiles.push_back(path);
+            
+            // Cria nome amigável
+            string filename = entry.path().filename().string();
+            string friendlyName = folder + "/" + filename;
+            
+            // Remove prefixos para nome mais legível
+            size_t pos = friendlyName.find("tree2D_");
+            if (pos != string::npos) {
+                friendlyName = friendlyName.substr(pos + 7);
+            }
+            
+            pos = friendlyName.find("_step");
+            if (pos != string::npos) {
+                friendlyName.insert(pos, " ");
+            }
+            
+            treeFileNames.push_back(friendlyName);
+            totalFiles++;
+            
+            cout << "  [+] " << filename << endl;
+        }
+    }
+    
+    if (treeFiles.empty()) {
+        cout << "Nenhum arquivo VTK encontrado!" << endl;
+        cout << "Criando lista de arquivos padrão..." << endl;
+        
+        treeFiles = {
+            "data/Nterm_064/tree2D_Nterm0064_step0064.vtk",
+            "data/Nterm_064/tree2D_Nterm0064_step0008.vtk", 
+            "data/Nterm_128/tree2D_Nterm0128_step0128.vtk",
+            "data/Nterm_256/tree2D_Nterm0256_step0256.vtk"
+        };
+        
+        for (const auto& file : treeFiles) {
+            treeFileNames.push_back(file);
+        }
+    }
+    
+    cout << "Total de arquivos VTK carregados: " << treeFiles.size() << endl;
+}
+
+void printCurrentTreeInfo() {
+    if (currentTreeIndex >= treeFileNames.size()) return;
+    
+    cout << "\n=== Árvore Atual ===" << endl;
+    cout << "Arquivo: " << treeFileNames[currentTreeIndex] << endl;
+    cout << "Índice: " << (currentTreeIndex + 1) << " de " << treeFiles.size() << endl;
 }
 
 void updateTransformMatrix() {
@@ -154,7 +215,7 @@ void resetCamera() {
     cout << "Transformações resetadas" << endl;
 }
 
-void limitCameraValues() {
+inline void limitCameraValues() {
     camera.targetTranslation[0] = clamp(camera.targetTranslation[0], 
                                        -config.translationLimit, config.translationLimit);
     camera.targetTranslation[1] = clamp(camera.targetTranslation[1], 
@@ -171,32 +232,32 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 }
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
-    if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        mouse.isDragging = (action == GLFW_PRESS);
-        
-        if (mouse.isDragging) {
-            glfwGetCursorPos(window, &mouse.lastX, &mouse.lastY);
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-        } else {
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-        }
+    if (button != GLFW_MOUSE_BUTTON_LEFT) return;
+    
+    mouse.isDragging = (action == GLFW_PRESS);
+    
+    if (mouse.isDragging) {
+        glfwGetCursorPos(window, &mouse.lastX, &mouse.lastY);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+    } else {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     }
 }
 
 void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
-    if (mouse.isDragging) {
-        float deltaX = static_cast<float>(xpos - mouse.lastX) * config.dragSensitivity;
-        float deltaY = static_cast<float>(mouse.lastY - ypos) * config.dragSensitivity;
-        
-        // Compensa o zoom para movimento consistente
-        float zoomCompensation = 1.0f / camera.scale;
-        camera.targetTranslation[0] += deltaX * zoomCompensation;
-        camera.targetTranslation[1] += deltaY * zoomCompensation;
-        
-        mouse.lastX = xpos;
-        mouse.lastY = ypos;
-        limitCameraValues();
-    }
+    if (!mouse.isDragging) return;
+    
+    float deltaX = static_cast<float>(xpos - mouse.lastX) * config.dragSensitivity;
+    float deltaY = static_cast<float>(mouse.lastY - ypos) * config.dragSensitivity;
+    
+    // Compensa o zoom para movimento consistente
+    float zoomCompensation = 1.0f / camera.scale;
+    camera.targetTranslation[0] += deltaX * zoomCompensation;
+    camera.targetTranslation[1] += deltaY * zoomCompensation;
+    
+    mouse.lastX = xpos;
+    mouse.lastY = ypos;
+    limitCameraValues();
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
@@ -230,9 +291,9 @@ void handleKeyPress(int key) {
             cout << "Wireframe: " << (showWireframe ? "ON" : "OFF") << endl;
             break;
         case GLFW_KEY_L:
-            thickLines = !thickLines;
-            treeRenderer.setLineWidth(thickLines ? 5.0f : 2.0f);
-            cout << "Linhas grossas: " << (thickLines ? "ON" : "OFF") << endl;
+            thicknessMode = !thicknessMode;
+            treeRenderer.setThicknessMode(thicknessMode);
+            cout << "Espessura adaptativa: " << (thicknessMode ? "ON" : "OFF") << endl;
             break;
         case GLFW_KEY_RIGHT:
             handleTreeNavigation(1);
@@ -240,8 +301,26 @@ void handleKeyPress(int key) {
         case GLFW_KEY_LEFT:
             handleTreeNavigation(-1);
             break;
-        case GLFW_KEY_C: // NOVO: Alternar entre gradiente e monocromático
-            toggleColorMode();
+        case GLFW_KEY_C:
+            if (gradientMode) {
+                gradientMode = false;
+                monochromeMode = true;
+                treeRenderer.setGradientMode(false);
+                treeRenderer.setColorMode(true);
+                cout << "Modo monocromático: ON (Verde)" << endl;
+            } else if (monochromeMode) {
+                monochromeMode = false;
+                treeRenderer.setColorMode(false);
+                treeRenderer.setGradientMode(false);
+                cout << "Modo de cor: OFF (Branco)" << endl;
+            } else {
+                gradientMode = true;
+                treeRenderer.setGradientMode(true);
+                cout << "Modo gradiente: ON (Violeta->Vermelho)" << endl;
+            }
+            break;
+        case GLFW_KEY_I:
+            printCurrentTreeInfo();
             break;
     }
 }
@@ -249,19 +328,16 @@ void handleKeyPress(int key) {
 void handleTreeNavigation(int direction) {
     if (treeFiles.empty()) return;
     
-    currentTreeIndex = (direction > 0) 
-        ? (currentTreeIndex + 1) % treeFiles.size()
-        : (currentTreeIndex == 0) ? treeFiles.size() - 1 : currentTreeIndex - 1;
+    if (direction > 0) {
+        currentTreeIndex = (currentTreeIndex + 1) % treeFiles.size();
+    } else {
+        currentTreeIndex = (currentTreeIndex == 0) ? treeFiles.size() - 1 : currentTreeIndex - 1;
+    }
     
     if (vtkLoader.loadFile(treeFiles[currentTreeIndex])) {
-        cout << "Árvore carregada: " << treeFiles[currentTreeIndex] << endl;
+        cout << "\n--- Nova Árvore Carregada ---" << endl;
+        printCurrentTreeInfo();
     }
-}
-
-void toggleColorMode() {
-    monochromeMode = !monochromeMode;
-    treeRenderer.setColorMode(monochromeMode);
-    cout << "Modo de cor: " << (monochromeMode ? "Monocromático Verde" : "Gradiente Vermelho-Violeta") << endl;
 }
 
 void processInput(GLFWwindow* window) {
@@ -294,9 +370,10 @@ void printControls() {
     cout << "Q/E - Rotacionar suavemente" << endl;
     cout << "Scroll Mouse - Zoom suave" << endl;
     cout << "T - Alternar Wireframe" << endl;
-    cout << "L - Alternar Linhas Grossas" << endl;
+    cout << "L - Alternar Linhas Adaptativas" << endl;
     cout << "C - Alternar Modo de Cor" << endl;
-    cout << "SETAS - Navegar entre árvores (" << treeFiles.size() << " disponíveis)" << endl;
+    cout << "SETAS - Navegar entre árvores" << endl;
+    cout << "I - Mostrar informação da árvore atual" << endl;
     cout << endl;
 }
 
@@ -349,6 +426,7 @@ int main() {
     loadTreeFiles();
     if (!treeFiles.empty()) {
         vtkLoader.loadFile(treeFiles[0]);
+        printCurrentTreeInfo();
     }
 
     // Configuração OpenGL
@@ -368,7 +446,9 @@ int main() {
         auto currentTime = chrono::steady_clock::now();
         float deltaTime = chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
-        deltaTime = min(deltaTime, 0.1f); // Limita para evitar problemas
+        
+        // Limita delta time para evitar problemas
+        if (deltaTime > 0.1f) deltaTime = 0.1f;
         
         // Processamento
         processInput(window);

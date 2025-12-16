@@ -15,23 +15,37 @@ public:
     void setLineWidth(float width) { lineWidth = width; }
     void applyTransform(const float* transformMatrix);
     void setColorMode(bool monochrome) { useMonochrome = monochrome; }
+    void setGradientMode(bool enabled) { gradientMode = enabled; }
+    void setThicknessMode(bool enabled) { thicknessMode = enabled; }
     
 private:
+    struct RenderData {
+        std::vector<float> vertices;
+        std::vector<float> colors;
+        std::vector<float> thicknesses;
+    };
+    
     unsigned int shaderProgram;
     unsigned int VAO, VBO;
     float lineWidth;
-    bool useMonochrome = false;
+    bool useMonochrome;
+    bool gradientMode;
+    bool thicknessMode;
+    
+    void calculateNodeInfo(const std::vector<Segment>& segments,
+                          std::vector<int>& depth,
+                          std::vector<int>& descendantCount);
+    int findRootSegment(const std::vector<Segment>& segments);
+    void buildAdjacencyList(const std::vector<Segment>& segments,
+                          std::vector<std::vector<int>>& children);
     
     std::vector<Segment> createTestTree();
     void renderSegments(const std::vector<Segment>& segments);
-    
-    // NOVO: Calcula hierarquia para coloração
-    std::vector<int> calculateHierarchyDepth(const std::vector<Segment>& segments);
-    int findRootSegment(const std::vector<Segment>& segments);
+    RenderData prepareRenderData(const std::vector<Segment>& segments);
     
     unsigned int compileShader(const std::string& source, unsigned int type);
-    unsigned int createShaderProgram(const std::string& vertexSource, const std::string& fragmentSource);
-    std::string loadShaderSource(const std::string& filepath);
+    unsigned int createShaderProgram(const std::string& vertexSource, 
+                                    const std::string& fragmentSource);
 };
 
 #endif

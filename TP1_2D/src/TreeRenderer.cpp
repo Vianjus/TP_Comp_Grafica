@@ -7,8 +7,11 @@
 #include <algorithm>
 #include <queue>
 #include <unordered_map>
+#include <stack>
+#include <functional>
 
-TreeRenderer::TreeRenderer() : shaderProgram(0), VAO(0), VBO(0), lineWidth(2.0f), useMonochrome(false) {}
+TreeRenderer::TreeRenderer() : shaderProgram(0), VAO(0), VBO(0), lineWidth(2.0f), 
+                               useMonochrome(false), gradientMode(false), thicknessMode(false) {}
 
 TreeRenderer::~TreeRenderer() {
     if (VAO) glDeleteVertexArrays(1, &VAO);
@@ -17,62 +20,41 @@ TreeRenderer::~TreeRenderer() {
 }
 
 bool TreeRenderer::initialize() {
-    // Shader para coloração hierárquica
     const char* vertexShaderSource = R"(
         #version 330 core
         layout (location = 0) in vec2 aPos;
-        layout (location = 1) in float aHierarchyLevel; // Nível hierárquico (0 a 1)
+        layout (location = 1) in vec3 aColor;
         uniform mat4 transform;
-        out float hierarchyLevel;
+        out vec3 fragColor;
         
         void main() {
             gl_Position = transform * vec4(aPos, 0.0, 1.0);
-            hierarchyLevel = aHierarchyLevel;
+            fragColor = aColor;
         }
     )";
     
     const char* fragmentShaderSource = R"(
         #version 330 core
-        in float hierarchyLevel;
+        in vec3 fragColor;
         out vec4 FragColor;
-        uniform bool monochrome;
         
         void main() {
-            if (monochrome) {
-                // Modo monocromático verde
-                float intensity = 0.3 + hierarchyLevel * 0.5;
-                FragColor = vec4(0.1, intensity, 0.2, 1.0);
-            } else {
-                // Gradiente hierárquico: Vermelho (raiz) -> Violeta/Azul (folhas)
-                // hierarchyLevel = 0.0 (raiz) -> 1.0 (folhas)
-                float red = 1.0 - hierarchyLevel * 0.8;
-                float green = 0.1 + hierarchyLevel * 0.2;
-                float blue = 0.2 + hierarchyLevel * 0.8;
-                
-                // Intensifica as cores
-                red = clamp(red, 0.2, 1.0);
-                green = clamp(green, 0.1, 0.4);
-                blue = clamp(blue, 0.2, 1.0);
-                
-                FragColor = vec4(red, green, blue, 1.0);
-            }
+            FragColor = vec4(fragColor, 1.0);
         }
     )";
     
     shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
     if (!shaderProgram) return false;
     
-    // Configura VAO e VBO
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
     
     glBindVertexArray(VAO);
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     
-    // Configura atributos: posição (2 floats) + nível hierárquico (1 float)
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)(2 * sizeof(float)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(2 * sizeof(float)));
     glEnableVertexAttribArray(1);
     
     glBindVertexArray(0);
@@ -81,93 +63,161 @@ bool TreeRenderer::initialize() {
     return true;
 }
 
-// NOVO: Encontra o segmento raiz (aquele que não tem pai)
 int TreeRenderer::findRootSegment(const std::vector<Segment>& segments) {
-    // Procura por segmentos que começam em pontos que não são finais de outros segmentos
-    std::vector<bool> isEndPoint(segments.size() * 2, false);
+    if (segments.empty()) return -1;
     
-    // Marca todos os pontos finais
-    for (int i = 0; i < segments.size(); i++) {
-        // Encontra índice do ponto final
-        for (int j = 0; j < segments.size(); j++) {
-            if (i != j) {
-                // Verifica se o ponto final deste segmento é ponto inicial de outro
-                float distStart = std::abs(segments[j].start.x - segments[i].end.x) + 
-                                std::abs(segments[j].start.y - segments[i].end.y);
-                if (distStart < 0.001f) {
-                    isEndPoint[i] = true;
-                    break;
-                }
+    std::vector<bool> hasParent(segments.size(), false);
+    
+    for (size_t i = 0; i < segments.size(); i++) {
+        for (size_t j = 0; j < segments.size(); j++) {
+            if (i == j) continue;
+            
+            // Verifica se o segmento j termina onde o segmento i começa
+            float dist = std::abs(segments[j].end.x - segments[i].start.x) + 
+                       std::abs(segments[j].end.y - segments[i].start.y);
+            if (dist < 0.001f) {
+                hasParent[i] = true;
+                break;
             }
         }
     }
     
-    // O segmento raiz é aquele cujo ponto inicial não é ponto final de nenhum outro
-    for (int i = 0; i < segments.size(); i++) {
-        bool isStartPointOfOthers = false;
-        for (int j = 0; j < segments.size(); j++) {
-            if (i != j) {
-                float distEnd = std::abs(segments[j].end.x - segments[i].start.x) + 
-                              std::abs(segments[j].end.y - segments[i].start.y);
-                if (distEnd < 0.001f) {
-                    isStartPointOfOthers = true;
-                    break;
-                }
-            }
-        }
-        if (!isStartPointOfOthers) {
-            return i;
-        }
+    for (size_t i = 0; i < segments.size(); i++) {
+        if (!hasParent[i]) return static_cast<int>(i);
     }
     
-    return 0; // Fallback
+    return 0;
 }
 
-// NOVO: Calcula profundidade hierárquica usando BFS
-std::vector<int> TreeRenderer::calculateHierarchyDepth(const std::vector<Segment>& segments) {
-    std::vector<int> depth(segments.size(), -1);
+void TreeRenderer::buildAdjacencyList(const std::vector<Segment>& segments,
+                                    std::vector<std::vector<int>>& children) {
+    children.clear();
+    children.resize(segments.size());
     
-    if (segments.empty()) return depth;
+    for (size_t i = 0; i < segments.size(); i++) {
+        for (size_t j = 0; j < segments.size(); j++) {
+            if (i == j) continue;
+            
+            float dist = std::abs(segments[j].start.x - segments[i].end.x) + 
+                       std::abs(segments[j].start.y - segments[i].end.y);
+            if (dist < 0.001f) {
+                children[i].push_back(static_cast<int>(j));
+            }
+        }
+    }
+}
+
+void TreeRenderer::calculateNodeInfo(const std::vector<Segment>& segments,
+                                   std::vector<int>& depth,
+                                   std::vector<int>& descendantCount) {
+    depth.resize(segments.size(), -1);
+    descendantCount.resize(segments.size(), 0);
     
-    // Encontra a raiz
-    int rootIndex = findRootSegment(segments);
-    depth[rootIndex] = 0;
+    if (segments.empty()) return;
     
-    // Fila para BFS
+    std::vector<std::vector<int>> children;
+    buildAdjacencyList(segments, children);
+    
+    int root = findRootSegment(segments);
+    if (root == -1) return;
+    
+    // Calcula profundidade usando BFS
     std::queue<int> q;
-    q.push(rootIndex);
+    depth[root] = 0;
+    q.push(root);
     
     while (!q.empty()) {
         int current = q.front();
         q.pop();
         
-        // Encontra filhos (segmentos que começam onde este termina)
-        for (int i = 0; i < segments.size(); i++) {
-            if (depth[i] == -1) { // Não visitado
-                float dist = std::abs(segments[i].start.x - segments[current].end.x) + 
-                           std::abs(segments[i].start.y - segments[current].end.y);
-                if (dist < 0.001f) { // São conectados
-                    depth[i] = depth[current] + 1;
-                    q.push(i);
-                }
+        for (int child : children[current]) {
+            if (depth[child] == -1) {
+                depth[child] = depth[current] + 1;
+                q.push(child);
             }
         }
     }
     
-    // Encontra a profundidade máxima
-    int maxDepth = 0;
-    for (int d : depth) {
-        if (d > maxDepth) maxDepth = d;
-    }
-    
-    // Normaliza para 0-1
-    for (int i = 0; i < depth.size(); i++) {
-        if (depth[i] != -1 && maxDepth > 0) {
-            depth[i] = depth[i]; // Mantemos inteiro por enquanto, normalizamos depois
+    // Calcula número de descendentes recursivamente
+    std::function<int(int)> calculateDescendants = [&](int node) -> int {
+        int count = 0;
+        for (int child : children[node]) {
+            count += 1 + calculateDescendants(child);
         }
+        descendantCount[node] = count;
+        return count;
+    };
+    
+    calculateDescendants(root);
+}
+
+TreeRenderer::RenderData TreeRenderer::prepareRenderData(const std::vector<Segment>& segments) {
+    RenderData data;
+    
+    if (segments.empty()) return data;
+    
+    // Calcula informações dos nós
+    std::vector<int> depth;
+    std::vector<int> descendantCount;
+    calculateNodeInfo(segments, depth, descendantCount);
+    
+    // Encontra valores máximos para normalização
+    int maxDepth = *std::max_element(depth.begin(), depth.end());
+    int maxDescendants = *std::max_element(descendantCount.begin(), descendantCount.end());
+    
+    if (maxDepth == 0) maxDepth = 1;
+    if (maxDescendants == 0) maxDescendants = 1;
+    
+    // Prepara dados de renderização
+    data.vertices.reserve(segments.size() * 4);
+    data.colors.reserve(segments.size() * 6);
+    data.thicknesses.reserve(segments.size());
+    
+    for (size_t i = 0; i < segments.size(); i++) {
+        const auto& segment = segments[i];
+        float normalizedDepth = static_cast<float>(depth[i]) / maxDepth;
+        float normalizedDescendants = static_cast<float>(descendantCount[i]) / maxDescendants;
+        
+        // Calcula cor
+        float r, g, b;
+        
+        if (useMonochrome) {
+            r = 0.0f;
+            g = 1.0f;
+            b = 0.0f;
+        } else if (gradientMode) {
+            // Gradiente bottom-up: Violeta (folhas) -> Vermelho (raiz)
+            r = 1.0f - normalizedDepth * 0.5f;
+            g = 0.0f;
+            b = normalizedDepth * 0.5f;
+        } else {
+            r = g = b = 1.0f;
+        }
+        
+        // Calcula espessura
+        float thickness = lineWidth;
+        if (thicknessMode) {
+            // ESPESSURA BASEADA NO NÚMERO DE DESCENDENTES
+            thickness = 2.0f + normalizedDescendants * 13.0f;
+        }
+        
+        // Adiciona vértices e cores
+        data.vertices.push_back(segment.start.x);
+        data.vertices.push_back(segment.start.y);
+        data.colors.push_back(r);
+        data.colors.push_back(g);
+        data.colors.push_back(b);
+        
+        data.vertices.push_back(segment.end.x);
+        data.vertices.push_back(segment.end.y);
+        data.colors.push_back(r);
+        data.colors.push_back(g);
+        data.colors.push_back(b);
+        
+        data.thicknesses.push_back(thickness);
     }
     
-    return depth;
+    return data;
 }
 
 void TreeRenderer::applyTransform(const float* transformMatrix) {
@@ -176,12 +226,6 @@ void TreeRenderer::applyTransform(const float* transformMatrix) {
     if (transformLoc != -1) {
         glUniformMatrix4fv(transformLoc, 1, GL_FALSE, transformMatrix);
     }
-    
-    // Define modo de cor
-    GLuint monoLoc = glGetUniformLocation(shaderProgram, "monochrome");
-    if (monoLoc != -1) {
-        glUniform1i(monoLoc, useMonochrome);
-    }
 }
 
 void TreeRenderer::render(const std::vector<Segment>& segments) {
@@ -189,7 +233,7 @@ void TreeRenderer::render(const std::vector<Segment>& segments) {
     
     if (segments.empty()) {
         if (firstRender) {
-            std::cout << "Nenhuma arvore carregada, renderizando arvore de teste..." << std::endl;
+            std::cout << "Nenhuma árvore carregada, renderizando árvore de teste..." << std::endl;
             firstRender = false;
         }
         std::vector<Segment> testSegments = createTestTree();
@@ -198,7 +242,7 @@ void TreeRenderer::render(const std::vector<Segment>& segments) {
     }
     
     if (firstRender) {
-        std::cout << "Renderizando arvore com " << segments.size() << " segmentos" << std::endl;
+        std::cout << "Renderizando árvore com " << segments.size() << " segmentos" << std::endl;
         firstRender = false;
     }
     
@@ -208,94 +252,87 @@ void TreeRenderer::render(const std::vector<Segment>& segments) {
 std::vector<Segment> TreeRenderer::createTestTree() {
     std::vector<Segment> testSegments;
     
-    // Árvore hierárquica mais clara
-    Segment seg;
+    // Tronco principal
+    testSegments.emplace_back(Point2D(0.0f, -1.0f), Point2D(0.0f, -0.5f), 0.1f, 0.08f);
     
-    // Tronco principal (nível 0)
-    seg = {Point2D(0.0f, -1.0f), Point2D(0.0f, -0.5f), 0.1f, 0.08f};
-    testSegments.push_back(seg);
+    // Ramos primários
+    testSegments.emplace_back(Point2D(0.0f, -0.5f), Point2D(0.3f, -0.2f), 0.08f, 0.06f);
+    testSegments.emplace_back(Point2D(0.0f, -0.5f), Point2D(-0.3f, -0.2f), 0.08f, 0.06f);
     
-    // Ramos primários (nível 1)
-    seg = {Point2D(0.0f, -0.5f), Point2D(0.3f, -0.2f), 0.08f, 0.06f};
-    testSegments.push_back(seg);
-    seg = {Point2D(0.0f, -0.5f), Point2D(-0.3f, -0.2f), 0.08f, 0.06f};
-    testSegments.push_back(seg);
+    // Ramos secundários
+    testSegments.emplace_back(Point2D(0.3f, -0.2f), Point2D(0.5f, 0.1f), 0.06f, 0.04f);
+    testSegments.emplace_back(Point2D(-0.3f, -0.2f), Point2D(-0.5f, 0.1f), 0.06f, 0.04f);
     
-    // Ramos secundários (nível 2)
-    seg = {Point2D(0.3f, -0.2f), Point2D(0.5f, 0.1f), 0.06f, 0.04f};
-    testSegments.push_back(seg);
-    seg = {Point2D(-0.3f, -0.2f), Point2D(-0.5f, 0.1f), 0.06f, 0.04f};
-    testSegments.push_back(seg);
-    
-    // Ramos terciários (nível 3 - folhas)
-    seg = {Point2D(0.5f, 0.1f), Point2D(0.6f, 0.4f), 0.04f, 0.02f};
-    testSegments.push_back(seg);
-    seg = {Point2D(0.5f, 0.1f), Point2D(0.4f, 0.4f), 0.04f, 0.02f};
-    testSegments.push_back(seg);
-    seg = {Point2D(-0.5f, 0.1f), Point2D(-0.6f, 0.4f), 0.04f, 0.02f};
-    testSegments.push_back(seg);
-    seg = {Point2D(-0.5f, 0.1f), Point2D(-0.4f, 0.4f), 0.04f, 0.02f};
-    testSegments.push_back(seg);
+    // Ramos terciários
+    testSegments.emplace_back(Point2D(0.5f, 0.1f), Point2D(0.6f, 0.4f), 0.04f, 0.02f);
+    testSegments.emplace_back(Point2D(0.5f, 0.1f), Point2D(0.4f, 0.4f), 0.04f, 0.02f);
+    testSegments.emplace_back(Point2D(-0.5f, 0.1f), Point2D(-0.6f, 0.4f), 0.04f, 0.02f);
+    testSegments.emplace_back(Point2D(-0.5f, 0.1f), Point2D(-0.4f, 0.4f), 0.04f, 0.02f);
     
     return testSegments;
 }
 
 void TreeRenderer::renderSegments(const std::vector<Segment>& segments) {
-    std::vector<float> vertices;
+    RenderData data = prepareRenderData(segments);
     
-    // Calcula hierarquia
-    std::vector<int> hierarchyDepth = calculateHierarchyDepth(segments);
+    if (data.vertices.empty()) return;
     
-    // Encontra profundidade máxima para normalização
-    int maxDepth = 0;
-    for (int depth : hierarchyDepth) {
-        if (depth > maxDepth) maxDepth = depth;
+    if (thicknessMode && !data.thicknesses.empty()) {
+        // Renderiza segmento por segmento com espessuras diferentes
+        for (size_t i = 0; i < segments.size(); i++) {
+            float thickness = std::clamp(data.thicknesses[i], 1.0f, 10.0f);
+            glLineWidth(thickness);
+            
+            std::vector<float> segmentData;
+            size_t baseIdx = i * 2;
+            
+            // Vértice inicial
+            segmentData.insert(segmentData.end(), {
+                data.vertices[baseIdx * 2],
+                data.vertices[baseIdx * 2 + 1],
+                data.colors[baseIdx * 3],
+                data.colors[baseIdx * 3 + 1],
+                data.colors[baseIdx * 3 + 2]
+            });
+            
+            // Vértice final
+            segmentData.insert(segmentData.end(), {
+                data.vertices[(baseIdx + 1) * 2],
+                data.vertices[(baseIdx + 1) * 2 + 1],
+                data.colors[(baseIdx + 1) * 3],
+                data.colors[(baseIdx + 1) * 3 + 1],
+                data.colors[(baseIdx + 1) * 3 + 2]
+            });
+            
+            glBindVertexArray(VAO);
+            glBindBuffer(GL_ARRAY_BUFFER, VBO);
+            glBufferData(GL_ARRAY_BUFFER, segmentData.size() * sizeof(float), 
+                        segmentData.data(), GL_STATIC_DRAW);
+            glDrawArrays(GL_LINES, 0, 2);
+        }
+    } else {
+        // Renderiza todos os segmentos de uma vez
+        glLineWidth(lineWidth);
+        
+        std::vector<float> interleavedData;
+        interleavedData.reserve(data.vertices.size() / 2 * 5);
+        
+        for (size_t i = 0; i < data.vertices.size() / 2; i++) {
+            interleavedData.push_back(data.vertices[i * 2]);
+            interleavedData.push_back(data.vertices[i * 2 + 1]);
+            interleavedData.push_back(data.colors[i * 3]);
+            interleavedData.push_back(data.colors[i * 3 + 1]);
+            interleavedData.push_back(data.colors[i * 3 + 2]);
+        }
+        
+        glBindVertexArray(VAO);
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferData(GL_ARRAY_BUFFER, interleavedData.size() * sizeof(float), 
+                    interleavedData.data(), GL_STATIC_DRAW);
+        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(data.vertices.size() / 2));
     }
     
-    if (maxDepth == 0) maxDepth = 1; // Evita divisão por zero
-    
-    // Prepara vértices com dados hierárquicos
-    for (int i = 0; i < segments.size(); i++) {
-        const auto& segment = segments[i];
-        
-        // Nível hierárquico normalizado (0 = raiz, 1 = folha mais profunda)
-        float hierarchyLevel = static_cast<float>(hierarchyDepth[i]) / maxDepth;
-        
-        // Vértice inicial
-        vertices.push_back(segment.start.x);
-        vertices.push_back(segment.start.y);
-        vertices.push_back(hierarchyLevel);
-        
-        // Vértice final
-        vertices.push_back(segment.end.x);
-        vertices.push_back(segment.end.y);
-        vertices.push_back(hierarchyLevel);
-    }
-    
-    glUseProgram(shaderProgram);
-    glLineWidth(lineWidth);
-    
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
-    glDrawArrays(GL_LINES, 0, vertices.size() / 3); // 3 componentes por vértice
     glBindVertexArray(0);
-}
-
-
-
-
-
-std::string TreeRenderer::loadShaderSource(const std::string& filepath) {
-    std::ifstream file(filepath);
-    if (!file.is_open()) {
-        std::cerr << "Erro ao abrir shader: " << filepath << std::endl;
-        return "";
-    }
-    
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
 }
 
 unsigned int TreeRenderer::compileShader(const std::string& source, unsigned int type) {

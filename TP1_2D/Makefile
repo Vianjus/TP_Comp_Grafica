@@ -21,7 +21,6 @@ $(TARGET): $(SOURCES)
 
 # Regra para executar
 run: $(TARGET)
-	@copy "$(DLL)" . >nul
 	@echo "=== Executando Visualizador de Arvores Arteriais ==="
 	@.\$(TARGET)
 

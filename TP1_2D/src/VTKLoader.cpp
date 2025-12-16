@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <queue>
+#include <functional>
 
 VTKLoader::VTKLoader() {}
 
@@ -42,13 +43,11 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
     bool inPointsSection = false, inLinesSection = false, inRadiiSection = false;
 
     while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        
         std::istringstream iss(line);
         std::string token;
         
-        // Pula linhas vazias e comentários
-        if (line.empty() || line[0] == '#') continue;
-        
-        // Detecta seções
         if (line.find("POINTS") == 0) {
             iss >> token >> pointsCount >> token;
             tempPoints.reserve(pointsCount);
@@ -59,7 +58,7 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
         else if (line.find("LINES") == 0) {
             iss >> token >> linesCount;
             int totalValues;
-            iss >> totalValues; // Número total de valores na seção LINES
+            iss >> totalValues;
             connections.reserve(linesCount);
             inLinesSection = true;
             inPointsSection = inRadiiSection = false;
@@ -71,10 +70,9 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
             continue;
         }
         else if (line.find("LOOKUP_TABLE") == 0) {
-            continue; // Ignora tabela de cores
+            continue;
         }
 
-        // Processa pontos
         if (inPointsSection && pointsCount > 0) {
             float x, y, z;
             if (iss >> x >> y >> z) {
@@ -82,7 +80,6 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
                 if (--pointsCount == 0) inPointsSection = false;
             }
         }
-        // Processa linhas
         else if (inLinesSection && linesCount > 0) {
             int numPoints;
             if (iss >> numPoints) {
@@ -92,9 +89,8 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
                         connections.emplace_back(p1, p2);
                         linesCount--;
                     }
-                }
-                // Pula linhas com mais pontos (polylines)
-                else {
+                } else {
+                    // Pula polylines
                     for (int i = 0; i < numPoints; i++) {
                         int dummy;
                         iss >> dummy;
@@ -103,7 +99,6 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
                 }
             }
         }
-        // Processa raios
         else if (inRadiiSection) {
             float radius;
             while (iss >> radius) {
@@ -114,85 +109,79 @@ bool VTKLoader::loadRealVTKFile(const std::string& filename) {
 
     file.close();
 
-    // Constrói segmentos
-    if (!tempPoints.empty() && !connections.empty()) {
-        points = tempPoints;
-        
-        // Encontra limites para normalização
-        float minX = tempPoints[0].x, maxX = tempPoints[0].x;
-        float minY = tempPoints[0].y, maxY = tempPoints[0].y;
-        
-        for (const auto& p : tempPoints) {
-            minX = std::min(minX, p.x);
-            maxX = std::max(maxX, p.x);
-            minY = std::min(minY, p.y);
-            maxY = std::max(maxY, p.y);
-        }
-        
-        float scaleX = 2.0f / (maxX - minX);
-        float scaleY = 2.0f / (maxY - minY);
-        float scale = std::min(scaleX, scaleY) * 0.8f; // Margem
-        
-        // Centro para normalização
-        float centerX = (minX + maxX) / 2.0f;
-        float centerY = (minY + maxY) / 2.0f;
-        
-        for (const auto& conn : connections) {
-            if (conn.first < points.size() && conn.second < points.size()) {
-                Segment seg;
-                
-                // Normaliza coordenadas para [-1, 1]
-                seg.start.x = (points[conn.first].x - centerX) * scale;
-                seg.start.y = (points[conn.first].y - centerY) * scale;
-                seg.end.x = (points[conn.second].x - centerX) * scale;
-                seg.end.y = (points[conn.second].y - centerY) * scale;
-                
-                // Define raios (normalizados ou padrão)
-                if (conn.first < radii.size() && conn.second < radii.size()) {
-                    seg.startRadius = radii[conn.first] * scale * 0.5f;
-                    seg.endRadius = radii[conn.second] * scale * 0.5f;
-                } else {
-                    seg.startRadius = 0.03f;
-                    seg.endRadius = 0.01f;
-                }
-                
-                seg.parentIndex = -1;
-                segments.push_back(seg);
-            }
-        }
-        
-        return !segments.empty();
+    if (tempPoints.empty() || connections.empty()) {
+        return false;
+    }
+
+    points = std::move(tempPoints);
+    
+    // Normalização das coordenadas
+    float minX = points[0].x, maxX = points[0].x;
+    float minY = points[0].y, maxY = points[0].y;
+    
+    for (const auto& p : points) {
+        minX = std::min(minX, p.x);
+        maxX = std::max(maxX, p.x);
+        minY = std::min(minY, p.y);
+        maxY = std::max(maxY, p.y);
     }
     
-    return false;
+    float scaleX = 2.0f / (maxX - minX);
+    float scaleY = 2.0f / (maxY - minY);
+    float scale = std::min(scaleX, scaleY) * 0.8f;
+    
+    float centerX = (minX + maxX) / 2.0f;
+    float centerY = (minY + maxY) / 2.0f;
+    
+    segments.reserve(connections.size());
+    
+    for (const auto& conn : connections) {
+        if (conn.first >= points.size() || conn.second >= points.size()) continue;
+        
+        Segment seg;
+        
+        seg.start.x = (points[conn.first].x - centerX) * scale;
+        seg.start.y = (points[conn.first].y - centerY) * scale;
+        seg.end.x = (points[conn.second].x - centerX) * scale;
+        seg.end.y = (points[conn.second].y - centerY) * scale;
+        
+        if (conn.first < radii.size() && conn.second < radii.size()) {
+            seg.startRadius = radii[conn.first] * scale * 0.5f;
+            seg.endRadius = radii[conn.second] * scale * 0.5f;
+        } else {
+            seg.startRadius = 0.03f;
+            seg.endRadius = 0.01f;
+        }
+        
+        seg.parentIndex = -1;
+        segments.push_back(seg);
+    }
+    
+    return !segments.empty();
 }
-
 
 void VTKLoader::generateProceduralTree() {
     segments.clear();
     points.clear();
     
-    std::mt19937 rng(42); // Seed fixa para reproducibilidade
+    std::mt19937 rng(42);
     std::uniform_real_distribution<float> dist(-0.05f, 0.05f);
     
-    Point2D root(0.0f, -0.8f);
-    points.push_back(root);
+    points.emplace_back(0.0f, -0.8f);
     
-    // Função recursiva para gerar ramos
-    auto generateBranch = [&](Point2D start, Point2D direction, float length, 
-                             float startRadius, int depth, int parentPointIdx, 
-                             auto&& self) -> int {
+    std::function<int(Point2D, Point2D, float, float, int, int)> generateBranch;
+    
+    generateBranch = [&](Point2D start, Point2D direction, float length, 
+                         float startRadius, int depth, int parentPointIdx) -> int {
         if (depth <= 0 || length < 0.01f) return -1;
         
-        // Calcula ponto final com alguma variação aleatória
         Point2D end;
         end.x = start.x + direction.x * length + dist(rng);
         end.y = start.y + direction.y * length + dist(rng);
         
-        int endPointIdx = points.size();
+        int endPointIdx = static_cast<int>(points.size());
         points.push_back(end);
         
-        // Cria segmento
         Segment seg;
         seg.start = start;
         seg.end = end;
@@ -201,82 +190,36 @@ void VTKLoader::generateProceduralTree() {
         seg.parentIndex = parentPointIdx;
         segments.push_back(seg);
         
-        // Gera sub-ramos
         if (depth > 1) {
             int numBranches = (depth > 3) ? 2 : 1;
             
             for (int i = 0; i < numBranches; i++) {
-                float angle = (i == 0) ? 0.5f : -0.5f; // Ângulos opostos
+                float angle = (i == 0) ? 0.5f : -0.5f;
                 
-                // Rotaciona a direção
                 Point2D newDir;
                 newDir.x = direction.x * cos(angle) - direction.y * sin(angle);
                 newDir.y = direction.x * sin(angle) + direction.y * cos(angle);
                 
-                // Normaliza
                 float mag = sqrt(newDir.x * newDir.x + newDir.y * newDir.y);
                 if (mag > 0) {
                     newDir.x /= mag;
                     newDir.y /= mag;
                 }
                 
-                self(end, newDir, length * 0.6f, startRadius * 0.7f, 
-                     depth - 1, endPointIdx, self);
+                generateBranch(end, newDir, length * 0.6f, startRadius * 0.7f, 
+                              depth - 1, endPointIdx);
             }
         }
         
         return endPointIdx;
     };
     
-    // Gera tronco principal
-    generateBranch(root, Point2D(0.0f, 1.0f), 0.6f, 0.08f, 6, 0, generateBranch);
-    
-    // Ramos laterais da base
-    generateBranch(Point2D(0.0f, -0.6f), Point2D(0.8f, 0.4f), 0.3f, 0.04f, 4, 0, generateBranch);
-    generateBranch(Point2D(0.0f, -0.6f), Point2D(-0.8f, 0.4f), 0.3f, 0.04f, 4, 0, generateBranch);
-    
-    // Ramos médios
-    generateBranch(Point2D(0.0f, -0.3f), Point2D(0.9f, 0.2f), 0.25f, 0.03f, 3, 0, generateBranch);
-    generateBranch(Point2D(0.0f, -0.3f), Point2D(-0.9f, 0.2f), 0.25f, 0.03f, 3, 0, generateBranch);
-}
-
-std::vector<int> VTKLoader::calculateSegmentHierarchy() {
-    std::vector<int> hierarchy(segments.size(), -1);
-    
-    if (segments.empty()) return hierarchy;
-    
-    // Encontra segmento raiz (assumindo que é o que tem o menor Y)
-    int rootIndex = 0;
-    float minY = segments[0].start.y;
-    for (int i = 1; i < segments.size(); i++) {
-        if (segments[i].start.y < minY) {
-            minY = segments[i].start.y;
-            rootIndex = i;
-        }
-    }
-    
-    hierarchy[rootIndex] = 0;
-    std::queue<int> q;
-    q.push(rootIndex);
-    
-    while (!q.empty()) {
-        int current = q.front();
-        q.pop();
-        
-        // Encontra segmentos conectados ao final deste segmento
-        for (int i = 0; i < segments.size(); i++) {
-            if (hierarchy[i] == -1) {
-                float dist = std::abs(segments[i].start.x - segments[current].end.x) + 
-                           std::abs(segments[i].start.y - segments[current].end.y);
-                if (dist < 0.01f) { // São conectados
-                    hierarchy[i] = hierarchy[current] + 1;
-                    q.push(i);
-                }
-            }
-        }
-    }
-    
-    return hierarchy;
+    // Gera árvore
+    generateBranch(points[0], Point2D(0.0f, 1.0f), 0.6f, 0.08f, 6, 0);
+    generateBranch(Point2D(0.0f, -0.6f), Point2D(0.8f, 0.4f), 0.3f, 0.04f, 4, 0);
+    generateBranch(Point2D(0.0f, -0.6f), Point2D(-0.8f, 0.4f), 0.3f, 0.04f, 4, 0);
+    generateBranch(Point2D(0.0f, -0.3f), Point2D(0.9f, 0.2f), 0.25f, 0.03f, 3, 0);
+    generateBranch(Point2D(0.0f, -0.3f), Point2D(-0.9f, 0.2f), 0.25f, 0.03f, 3, 0);
 }
 
 void VTKLoader::clear() {
